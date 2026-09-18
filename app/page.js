@@ -27,7 +27,6 @@ if (!window.ethereum) {
 throw new Error("MetaMask is not installed.");
 }
 
-```
 if (!account) {
   throw new Error("Please connect your wallet first.");
 }
@@ -37,7 +36,6 @@ return createClient({
   account: account,
   provider: window.ethereum,
 });
-```
 
 }
 
@@ -47,7 +45,6 @@ if (!window.ethereum) {
 throw new Error("Please install MetaMask.");
 }
 
-```
   const accounts = await window.ethereum.request({
     method: "eth_requestAccounts",
   });
@@ -61,14 +58,14 @@ throw new Error("Please install MetaMask.");
 } catch (err) {
   setStatus(err.message || "Failed to connect wallet.");
 }
-```
 
+  
 }
 
 async function writeContract(functionName, args, value) {
 const client = getClient();
 
-```
+
 setLoading(true);
 setStatus("Waiting for wallet confirmation...");
 
@@ -114,14 +111,12 @@ try {
 } finally {
   setLoading(false);
 }
-```
 
 }
 
 async function getLatestBountyId() {
 const client = getClient();
 
-```
 const count = await client.readContract({
   address: CONTRACT,
   functionName: "get_bounty_count",
@@ -136,7 +131,6 @@ if (!Number.isFinite(numericCount) || numericCount <= 0) {
 }
 
 return numericCount - 1;
-```
 
 }
 
@@ -146,7 +140,6 @@ setStatus("Connect your wallet first.");
 return;
 }
 
-```
 if (!title.trim()) {
   setStatus("Enter a bounty title.");
   return;
@@ -205,8 +198,6 @@ try {
 } catch (err) {
   console.error(err);
 }
-```
-
 }
 
 async function submitWork() {
@@ -215,7 +206,6 @@ setStatus("Connect your wallet first.");
 return;
 }
 
-```
 if (!submissionUrl.trim()) {
   setStatus("Enter the URL of the completed work.");
   return;
@@ -240,7 +230,6 @@ try {
 } catch (err) {
   console.error(err);
 }
-```
 
 }
 
@@ -250,7 +239,6 @@ setStatus("Connect your wallet first.");
 return;
 }
 
-```
 if (!bounty) {
   setStatus("Load a bounty first.");
   return;
@@ -275,8 +263,6 @@ try {
 } catch (err) {
   console.error(err);
 }
-```
-
 }
 
 async function settlePartial() {
@@ -285,7 +271,6 @@ setStatus("Connect your wallet first.");
 return;
 }
 
-```
 if (!bounty) {
   setStatus("Load a bounty first.");
   return;
@@ -310,7 +295,6 @@ try {
 } catch (err) {
   console.error(err);
 }
-```
 
 }
 
@@ -318,7 +302,6 @@ async function loadBounty(id = bountyId) {
 try {
 const client = getClient();
 
-```
   const numericId = Number(id);
 
   if (!Number.isInteger(numericId) || numericId < 0) {
@@ -343,14 +326,11 @@ const client = getClient();
       "Could not load this bounty. Make sure the bounty exists."
   );
 }
-```
-
 }
 
 useEffect(() => {
 if (!window.ethereum) return;
 
-```
 window.ethereum
   .request({ method: "eth_accounts" })
   .then((accounts) => {
@@ -378,8 +358,6 @@ return () => {
     handleAccountsChanged
   );
 };
-```
-
 }, []);
 
 const statusClass =
@@ -394,8 +372,7 @@ bounty?.status === "PARTIAL_SETTLED"
 
 return ( <main className="page"> <div className="container">
 
-```
-    {/* HEADER */}
+   {/* HEADER */}
     <header className="header">
       <div>
         <div className="brand">
@@ -855,7 +832,5 @@ return ( <main className="page"> <div className="container">
 
   </div>
 </main>
-```
-
 );
 }
