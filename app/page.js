@@ -13,6 +13,7 @@ export default function Home() {
 
   const [title, setTitle] = useState("");
   const [requirements, setRequirements] = useState("");
+  const [eligibleWorker, setEligibleWorker] = useState("");
   const [amount, setAmount] = useState("1");
 
   const [bountyId, setBountyId] = useState("0");
@@ -52,6 +53,7 @@ export default function Home() {
       }
 
       setAccount(accounts[0]);
+      setEligibleWorker(accounts[0]);
       setStatus("Wallet connected.");
     } catch (err) {
       setStatus(err.message || "Failed to connect wallet.");
@@ -143,6 +145,11 @@ export default function Home() {
       return;
     }
 
+    if (!eligibleWorker.trim()) {
+      setStatus("Enter the eligible worker address.");
+      return;
+    }
+
     if (!amount || Number(amount) <= 0) {
       setStatus("Enter a valid GEN reward.");
       return;
@@ -152,27 +159,16 @@ export default function Home() {
       const value =
         BigInt(Math.floor(Number(amount))) * 10n ** 18n;
 
-      /*
-       * The connected wallet becomes the eligible worker.
-       * This matches the corrected AgentBounty contract.
-       */
-      const eligibleWorker = account;
-
       await writeContract(
         "create_bounty",
         [
           title.trim(),
           requirements.trim(),
-          eligibleWorker,
+          eligibleWorker.trim(),
         ],
         value
       );
 
-      /*
-       * IMPORTANT:
-       * Do not assume the new bounty is #0.
-       * Read the total count and derive the newest ID.
-       */
       setStatus("Bounty created. Loading the new bounty...");
 
       const newBountyId = await getLatestBountyId();
@@ -181,6 +177,7 @@ export default function Home() {
 
       setTitle("");
       setRequirements("");
+      setAmount("1");
 
       await loadBounty(String(newBountyId));
 
@@ -227,6 +224,16 @@ export default function Home() {
   async function evaluateSubmission() {
     if (!account) {
       setStatus("Connect your wallet first.");
+      return;
+    }
+
+    if (!bounty) {
+      setStatus("Load a bounty first.");
+      return;
+    }
+
+    if (bounty.status !== "SUBMITTED") {
+      setStatus("This bounty is not ready for evaluation.");
       return;
     }
 
@@ -316,14 +323,17 @@ export default function Home() {
       .then((accounts) => {
         if (accounts?.length) {
           setAccount(accounts[0]);
+          setEligibleWorker(accounts[0]);
         }
       });
 
     const handleAccountsChanged = (accounts) => {
       if (accounts?.length) {
         setAccount(accounts[0]);
+        setEligibleWorker(accounts[0]);
       } else {
         setAccount("");
+        setEligibleWorker("");
         setBounty(null);
         setStatus("Wallet disconnected.");
       }
@@ -439,7 +449,7 @@ export default function Home() {
               <h3>Post a job</h3>
               <p>
                 An agent or client defines the work, requirements,
-                and GEN reward.
+                eligible worker, and GEN reward.
               </p>
             </div>
 
@@ -447,7 +457,7 @@ export default function Home() {
               <strong>02</strong>
               <h3>Build & submit</h3>
               <p>
-                An eligible worker completes the task and submits
+                The eligible worker completes the task and submits
                 a public URL containing the finished work.
               </p>
             </div>
@@ -484,9 +494,8 @@ export default function Home() {
             <h2>Post a bounty</h2>
 
             <p className="muted">
-              Describe the job and lock the reward in GEN escrow.
-              Your connected wallet becomes the eligible worker
-              for this test bounty.
+              Describe the job, bind an eligible worker, and lock
+              the reward in GEN escrow.
             </p>
 
             <label>Bounty title</label>
@@ -505,6 +514,19 @@ export default function Home() {
               placeholder="Responsive design, pricing section, contact form, mobile layout..."
               rows={5}
             />
+
+            <label>Eligible worker</label>
+
+            <input
+              value={eligibleWorker}
+              onChange={(e) => setEligibleWorker(e.target.value)}
+              placeholder="0x..."
+            />
+
+            <small className="muted">
+              Only this wallet can submit work and receive the
+              worker payout.
+            </small>
 
             <label>Reward</label>
 
@@ -624,7 +646,7 @@ export default function Home() {
             >
               {loading
                 ? "GenLayer is evaluating..."
-                : "Evaluate & Settle"}
+                : "Evaluate Submission"}
             </button>
 
             {bounty?.status === "PARTIAL" && (
@@ -785,3 +807,4 @@ export default function Home() {
     </main>
   );
 }
+```
