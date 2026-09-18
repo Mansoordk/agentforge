@@ -16,7 +16,7 @@ const [requirements, setRequirements] = useState("");
 const [eligibleWorker, setEligibleWorker] = useState("");
 const [amount, setAmount] = useState("1");
 
-const [bountyId, setBountyId] = useState("0");
+const [bountyId, setBountyId] = useState("");
 const [submissionUrl, setSubmissionUrl] = useState("");
 
 const [bounty, setBounty] = useState(null);
