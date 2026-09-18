@@ -14,12 +14,14 @@ class _Recipient:
 
 
 class AgentBounty(gl.Contract):
-    # Bounty data
     creators: DynArray[Address]
+    eligible_workers: DynArray[Address]
     workers: DynArray[Address]
+
     titles: DynArray[str]
     requirements: DynArray[str]
     submission_urls: DynArray[str]
+
     amounts: DynArray[u256]
     statuses: DynArray[str]
     scores: DynArray[u32]
@@ -33,17 +35,35 @@ class AgentBounty(gl.Contract):
     def create_bounty(
         self,
         title: str,
-        requirements: str
+        requirements: str,
+        eligible_worker: str
     ) -> u32:
         amount = gl.message.value
 
         if amount == u256(0):
             raise gl.vm.UserError("Bounty must contain GEN")
 
+        worker = Address(eligible_worker)
+
+        if worker == Address(
+            "0x0000000000000000000000000000000000000000"
+        ):
+            raise gl.vm.UserError("Eligible worker is required")
+
         bounty_id = u32(len(self.titles))
 
-        self.creators.append(gl.message.sender_address)
-        self.workers.append(Address("0x0000000000000000000000000000000000000000"))
+        self.creators.append(
+            gl.message.sender_address
+        )
+
+        self.eligible_workers.append(worker)
+
+        self.workers.append(
+            Address(
+                "0x0000000000000000000000000000000000000000"
+            )
+        )
+
         self.titles.append(title)
         self.requirements.append(requirements)
         self.submission_urls.append("")
@@ -67,10 +87,16 @@ class AgentBounty(gl.Contract):
         if self.statuses[bounty_id] != "OPEN":
             raise gl.vm.UserError("Bounty is not open")
 
+        if gl.message.sender_address != self.eligible_workers[bounty_id]:
+            raise gl.vm.UserError("Caller is not the eligible worker")
+
         if submission_url == "":
             raise gl.vm.UserError("Submission URL is required")
 
-        self.workers[bounty_id] = gl.message.sender_address
+        self.workers[bounty_id] = (
+            gl.message.sender_address
+        )
+
         self.submission_urls[bounty_id] = submission_url
         self.statuses[bounty_id] = "SUBMITTED"
 
@@ -85,16 +111,25 @@ class AgentBounty(gl.Contract):
         if self.statuses[bounty_id] != "SUBMITTED":
             raise gl.vm.UserError("Work has not been submitted")
 
-        # Copy storage values into normal memory before using them
         title = self.titles[bounty_id]
         requirements = self.requirements[bounty_id]
         submission_url = self.submission_urls[bounty_id]
+
+        worker = self.workers[bounty_id]
+        eligible_worker = self.eligible_workers[bounty_id]
+
+        if worker != eligible_worker:
+            raise gl.vm.UserError("Worker binding mismatch")
+
+        if worker == Address(
+            "0x0000000000000000000000000000000000000000"
+        ):
+            raise gl.vm.UserError("Worker is not bound")
 
         def evaluate():
             response = gl.nondet.web.get(submission_url)
             content = response.body.decode("utf-8")
 
-            # Keep the prompt bounded
             content = content[:12000]
 
             prompt = f"""
@@ -150,7 +185,11 @@ requirements. Do not invent requirements that were not provided.
             score = int(data["score"])
             explanation = str(data["explanation"])
 
-            if verdict not in ["PASS", "PARTIAL", "FAIL"]:
+            if verdict not in [
+                "PASS",
+                "PARTIAL",
+                "FAIL"
+            ]:
                 raise gl.vm.UserError("Invalid verdict")
 
             if score < 0 or score > 100:
@@ -166,7 +205,10 @@ requirements. Do not invent requirements that were not provided.
             return evaluate()
 
         def validator_fn(leader_result):
-            if not isinstance(leader_result, gl.vm.Return):
+            if not isinstance(
+                leader_result,
+                gl.vm.Return
+            ):
                 return False
 
             leader_data = leader_result.calldata
@@ -176,14 +218,15 @@ requirements. Do not invent requirements that were not provided.
             except Exception:
                 return False
 
-            # Verdict must agree exactly.
-            if leader_data["verdict"] != validator_data["verdict"]:
+            if (
+                leader_data["verdict"]
+                != validator_data["verdict"]
+            ):
                 return False
 
-            # Allow reasonable variation between LLM scores.
             if abs(
-                int(leader_data["score"]) -
-                int(validator_data["score"])
+                int(leader_data["score"])
+                - int(validator_data["score"])
             ) > 15:
                 return False
 
@@ -194,17 +237,25 @@ requirements. Do not invent requirements that were not provided.
             validator_fn
         )
 
-        self.scores[bounty_id] = u32(result["score"])
-        self.verdicts[bounty_id] = result["verdict"]
-        self.explanations[bounty_id] = result["explanation"]
+        self.scores[bounty_id] = u32(
+            result["score"]
+        )
+
+        self.verdicts[bounty_id] = (
+            result["verdict"]
+        )
+
+        self.explanations[bounty_id] = (
+            result["explanation"]
+        )
 
         if result["verdict"] == "PASS":
             self.statuses[bounty_id] = "PAID"
 
             amount = self.amounts[bounty_id]
-            worker = self.workers[bounty_id]
+            payout_worker = self.eligible_workers[bounty_id]
 
-            _Recipient(worker).emit_transfer(
+            _Recipient(payout_worker).emit_transfer(
                 value=amount
             )
 
@@ -221,6 +272,48 @@ requirements. Do not invent requirements that were not provided.
         else:
             self.statuses[bounty_id] = "PARTIAL"
 
+    @gl.public.write
+    def settle_partial(
+        self,
+        bounty_id: u32
+    ) -> None:
+        if bounty_id >= u32(len(self.titles)):
+            raise gl.vm.UserError("Bounty does not exist")
+
+        if self.statuses[bounty_id] != "PARTIAL":
+            raise gl.vm.UserError(
+                "Bounty is not awaiting partial settlement"
+            )
+
+        worker = self.eligible_workers[bounty_id]
+        creator = self.creators[bounty_id]
+        amount = self.amounts[bounty_id]
+
+        if worker == Address(
+            "0x0000000000000000000000000000000000000000"
+        ):
+            raise gl.vm.UserError("Worker is not bound")
+
+        if self.workers[bounty_id] != worker:
+            raise gl.vm.UserError(
+                "Submitted worker does not match payout worker"
+            )
+
+        worker_amount = amount // u256(2)
+        creator_amount = amount - worker_amount
+
+        self.statuses[bounty_id] = "PARTIAL_SETTLED"
+
+        if worker_amount > u256(0):
+            _Recipient(worker).emit_transfer(
+                value=worker_amount
+            )
+
+        if creator_amount > u256(0):
+            _Recipient(creator).emit_transfer(
+                value=creator_amount
+            )
+
     @gl.public.view
     def get_bounty(
         self,
@@ -231,8 +324,15 @@ requirements. Do not invent requirements that were not provided.
 
         return {
             "id": bounty_id,
-            "creator": str(self.creators[bounty_id]),
-            "worker": str(self.workers[bounty_id]),
+            "creator": str(
+                self.creators[bounty_id]
+            ),
+            "eligible_worker": str(
+                self.eligible_workers[bounty_id]
+            ),
+            "worker": str(
+                self.workers[bounty_id]
+            ),
             "title": self.titles[bounty_id],
             "requirements": self.requirements[bounty_id],
             "submission_url": self.submission_urls[bounty_id],
