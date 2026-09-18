@@ -5,7 +5,7 @@ import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionHashVariant } from "genlayer-js/types";
 
-const CONTRACT = "0xb02E372dF602bcd1f28FD32e124a3FB79622e265";
+const CONTRACT = "0xf034F452cB385e8cB0f711Be6bb637ce01Fa91d3";
 
 export default function Home() {
   const [account, setAccount] = useState("");
