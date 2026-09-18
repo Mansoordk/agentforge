@@ -77,6 +77,10 @@ export default function Home() {
           ? tx
           : tx?.hash || tx?.transactionHash;
 
+      if (!txHash) {
+        throw new Error("Transaction hash was not returned.");
+      }
+
       setStatus("Transaction submitted. Waiting for confirmation...");
 
       const receipt = await client.waitForTransactionReceipt({
@@ -104,6 +108,25 @@ export default function Home() {
     }
   }
 
+  async function getLatestBountyId() {
+    const client = getClient();
+
+    const count = await client.readContract({
+      address: CONTRACT,
+      functionName: "get_bounty_count",
+      args: [],
+      transactionHashVariant: TransactionHashVariant.LATEST_FINAL,
+    });
+
+    const numericCount = Number(count);
+
+    if (!Number.isFinite(numericCount) || numericCount <= 0) {
+      throw new Error("No bounties exist yet.");
+    }
+
+    return numericCount - 1;
+  }
+
   async function createBounty() {
     if (!account) {
       setStatus("Connect your wallet first.");
@@ -129,20 +152,44 @@ export default function Home() {
       const value =
         BigInt(Math.floor(Number(amount))) * 10n ** 18n;
 
+      /*
+       * The connected wallet becomes the eligible worker.
+       * This matches the corrected AgentBounty contract.
+       */
+      const eligibleWorker = account;
+
       await writeContract(
         "create_bounty",
-        [title.trim(), requirements.trim()],
+        [
+          title.trim(),
+          requirements.trim(),
+          eligibleWorker,
+        ],
         value
       );
 
-      setStatus(
-        "Bounty created and GEN reward locked in escrow."
-      );
+      /*
+       * IMPORTANT:
+       * Do not assume the new bounty is #0.
+       * Read the total count and derive the newest ID.
+       */
+      setStatus("Bounty created. Loading the new bounty...");
+
+      const newBountyId = await getLatestBountyId();
+
+      setBountyId(String(newBountyId));
 
       setTitle("");
       setRequirements("");
-      await loadBounty("0");
-    } catch {}
+
+      await loadBounty(String(newBountyId));
+
+      setStatus(
+        `Bounty #${newBountyId} created and GEN reward locked in escrow.`
+      );
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   async function submitWork() {
@@ -153,6 +200,11 @@ export default function Home() {
 
     if (!submissionUrl.trim()) {
       setStatus("Enter the URL of the completed work.");
+      return;
+    }
+
+    if (bountyId === "" || Number(bountyId) < 0) {
+      setStatus("Enter a valid bounty ID.");
       return;
     }
 
@@ -167,7 +219,9 @@ export default function Home() {
       );
 
       await loadBounty(bountyId);
-    } catch {}
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   async function evaluateSubmission() {
@@ -187,22 +241,63 @@ export default function Home() {
       );
 
       await loadBounty(bountyId);
-    } catch {}
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function settlePartial() {
+    if (!account) {
+      setStatus("Connect your wallet first.");
+      return;
+    }
+
+    if (!bounty) {
+      setStatus("Load a bounty first.");
+      return;
+    }
+
+    if (bounty.status !== "PARTIAL") {
+      setStatus("This bounty does not have a PARTIAL verdict.");
+      return;
+    }
+
+    try {
+      await writeContract(
+        "settle_partial",
+        [Number(bountyId)]
+      );
+
+      setStatus(
+        "Partial escrow settled. Loading the final bounty state..."
+      );
+
+      await loadBounty(bountyId);
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   async function loadBounty(id = bountyId) {
     try {
       const client = getClient();
 
+      const numericId = Number(id);
+
+      if (!Number.isInteger(numericId) || numericId < 0) {
+        throw new Error("Invalid bounty ID.");
+      }
+
       const result = await client.readContract({
         address: CONTRACT,
         functionName: "get_bounty",
-        args: [Number(id)],
+        args: [numericId],
         transactionHashVariant: TransactionHashVariant.LATEST_FINAL,
       });
 
       setBounty(result);
-      setStatus(`Bounty #${id} loaded.`);
+      setBountyId(String(numericId));
+      setStatus(`Bounty #${numericId} loaded.`);
     } catch (err) {
       console.error(err);
       setBounty(null);
@@ -249,7 +344,8 @@ export default function Home() {
       ? "success"
       : bounty?.status === "REFUNDED"
         ? "danger"
-        : bounty?.status === "PARTIAL"
+        : bounty?.status === "PARTIAL" ||
+            bounty?.status === "PARTIAL_SETTLED"
           ? "warning"
           : "";
 
@@ -351,7 +447,7 @@ export default function Home() {
               <strong>02</strong>
               <h3>Build & submit</h3>
               <p>
-                A worker or AI agent completes the task and submits
+                An eligible worker completes the task and submits
                 a public URL containing the finished work.
               </p>
             </div>
@@ -369,8 +465,8 @@ export default function Home() {
               <strong>04</strong>
               <h3>Get paid</h3>
               <p>
-                A passing submission releases the escrowed GEN
-                directly to the worker.
+                The result determines whether escrow is paid,
+                refunded, or partially settled.
               </p>
             </div>
           </div>
@@ -389,7 +485,8 @@ export default function Home() {
 
             <p className="muted">
               Describe the job and lock the reward in GEN escrow.
-              Clear requirements help GenLayer evaluate the work.
+              Your connected wallet becomes the eligible worker
+              for this test bounty.
             </p>
 
             <label>Bounty title</label>
@@ -442,8 +539,8 @@ export default function Home() {
             <h2>Submit work</h2>
 
             <p className="muted">
-              Completed the job? Give GenLayer a public URL where
-              the work can be inspected.
+              Only the wallet bound as the eligible worker can
+              submit work for this bounty.
             </p>
 
             <label>Bounty ID</label>
@@ -518,12 +615,30 @@ export default function Home() {
             <button
               className="primary"
               onClick={evaluateSubmission}
-              disabled={loading || !account}
+              disabled={
+                loading ||
+                !account ||
+                !bounty ||
+                bounty.status !== "SUBMITTED"
+              }
             >
               {loading
                 ? "GenLayer is evaluating..."
                 : "Evaluate & Settle"}
             </button>
+
+            {bounty?.status === "PARTIAL" && (
+              <button
+                className="secondary"
+                onClick={settlePartial}
+                disabled={loading}
+                style={{ marginTop: "12px" }}
+              >
+                {loading
+                  ? "Settling..."
+                  : "Settle Partial Escrow"}
+              </button>
+            )}
           </div>
         </section>
 
@@ -598,12 +713,14 @@ export default function Home() {
 
                 <strong>
                   {bounty.status === "PAID"
-                    ? "✓ Reward released to worker"
+                    ? "✓ Reward released to eligible worker"
                     : bounty.status === "REFUNDED"
-                      ? "↩ Reward refunded to client"
+                      ? "↩ Reward refunded to creator"
                       : bounty.status === "PARTIAL"
-                        ? "◐ Partial result"
-                        : "Awaiting evaluation"}
+                        ? "◐ Partial verdict — escrow ready for settlement"
+                        : bounty.status === "PARTIAL_SETTLED"
+                          ? "✓ Partial escrow settled between worker and creator"
+                          : "Awaiting evaluation"}
                 </strong>
               </div>
             </div>
@@ -616,6 +733,24 @@ export default function Home() {
                   "GenLayer has not evaluated this submission yet."}
               </p>
             </div>
+
+            <div className="source">
+              <span>Eligible worker</span>
+
+              <strong>
+                {bounty.eligible_worker}
+              </strong>
+            </div>
+
+            {bounty.worker && (
+              <div className="source">
+                <span>Submitted by</span>
+
+                <strong>
+                  {bounty.worker}
+                </strong>
+              </div>
+            )}
 
             {bounty.submission_url && (
               <div className="source">
